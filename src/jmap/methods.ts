@@ -301,23 +301,11 @@ export async function sendEmail(params: SendEmailParams): Promise<string> {
 		bcc: params.bcc,
 		subject: params.subject,
 		bodyValues: {
-			body: {
-				value: params.textBody,
-				isEncodingProblem: false,
-				isTruncated: false,
-			},
-		},
-		textBody: [{ partId: "body", type: "text/plain" } as const].map((p) => ({
-			...p,
-			blobId: null,
-			size: 0,
-			name: null,
-			charset: null,
-			disposition: null,
-			cid: null,
-			language: null,
-			location: null,
-		})),
+			body: { value: params.textBody },
+		} as unknown as EmailCreate["bodyValues"],
+		textBody: [
+			{ partId: "body", type: "text/plain" },
+		] as EmailCreate["textBody"],
 	};
 
 	if (params.inReplyTo) {
@@ -359,19 +347,52 @@ export async function sendEmail(params: SendEmailParams): Promise<string> {
 		],
 	]);
 
-	// Extract created email ID
+	// Extract created email ID and check for errors
 	const emailSetResponse = responses[0];
 	if (!emailSetResponse) {
 		throw new Error("No response from Email/set");
 	}
 
-	const created = (
-		emailSetResponse[1] as { created?: Record<string, { id: string }> }
-	).created;
-	const emailId = created?.draft?.id;
+	const emailSetResult = emailSetResponse[1] as {
+		created?: Record<string, { id: string }>;
+		notCreated?: Record<string, { type: string; description?: string }>;
+	};
 
+	// Check for creation errors
+	if (emailSetResult.notCreated?.draft) {
+		const err = emailSetResult.notCreated.draft;
+		console.error("[Email/set notCreated]", JSON.stringify(err, null, 2));
+		throw new Error(
+			`Failed to create email: ${err.type}${err.description ? ` - ${err.description}` : ""}`,
+		);
+	}
+
+	const emailId = emailSetResult.created?.draft?.id;
 	if (!emailId) {
-		throw new Error("Failed to create email");
+		console.error(
+			"[Email/set response]",
+			JSON.stringify(emailSetResult, null, 2),
+		);
+		throw new Error("Failed to create email - no ID returned");
+	}
+
+	// Check submission response
+	const submissionResponse = responses[1];
+	if (submissionResponse) {
+		const submissionResult = submissionResponse[1] as {
+			created?: Record<string, unknown>;
+			notCreated?: Record<string, { type: string; description?: string }>;
+		};
+		if (submissionResult.notCreated?.submission) {
+			const err = submissionResult.notCreated.submission;
+			console.error(
+				"[EmailSubmission/set notCreated]",
+				JSON.stringify(err, null, 2),
+			);
+			throw new Error(
+				`Failed to submit email: ${err.type}${err.description ? ` - ${err.description}` : ""}`,
+			);
+		}
 	}
 
 	return emailId;

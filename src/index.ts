@@ -1,5 +1,8 @@
 #!/usr/bin/env bun
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+	McpServer,
+	ResourceTemplate,
+} from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import {
@@ -341,14 +344,19 @@ server.tool(
 		subject: z.string().describe("Email subject line"),
 		body: z.string().describe("Email body text"),
 		cc: z.string().optional().describe("CC recipients, comma-separated"),
+		bcc: z
+			.string()
+			.optional()
+			.describe("BCC recipients (hidden), comma-separated"),
 	},
-	async ({ action, to, subject, body, cc }) => {
+	async ({ action, to, subject, body, cc, bcc }) => {
 		// Parse addresses
 		const parseAddresses = (s: string): EmailAddress[] =>
 			s.split(",").map((e) => ({ name: null, email: e.trim() }));
 
 		const toAddrs = parseAddresses(to);
 		const ccAddrs = cc ? parseAddresses(cc) : undefined;
+		const bccAddrs = bcc ? parseAddresses(bcc) : undefined;
 
 		if (action === "preview") {
 			return {
@@ -359,6 +367,7 @@ server.tool(
 
 To: ${formatAddressList(toAddrs)}
 CC: ${ccAddrs ? formatAddressList(ccAddrs) : "(none)"}
+BCC: ${bccAddrs ? formatAddressList(bccAddrs) : "(none)"}
 Subject: ${subject}
 
 --- Body ---
@@ -376,6 +385,7 @@ To send this email, call this tool again with action: "confirm" and the same par
 			subject,
 			textBody: body,
 			cc: ccAddrs,
+			bcc: bccAddrs,
 		});
 
 		return {
@@ -394,7 +404,7 @@ Email ID: ${emailId}`,
 
 server.tool(
 	"reply_to_email",
-	"Reply to an existing email thread. ALWAYS use action='preview' first to review the draft before sending.",
+	"Reply to an existing email thread. ALWAYS use action='preview' first to review the draft before sending. For reply-all, include original CC recipients in the cc param.",
 	{
 		action: z
 			.enum(["preview", "confirm"])
@@ -403,9 +413,28 @@ server.tool(
 		body: z
 			.string()
 			.describe("Reply body text (your response, without quoting original)"),
+		cc: z
+			.string()
+			.optional()
+			.describe("CC recipients for reply-all, comma-separated"),
+		bcc: z
+			.string()
+			.optional()
+			.describe("BCC recipients (hidden), comma-separated"),
 	},
-	async ({ action, email_id, body }) => {
+	async ({ action, email_id, body, cc, bcc }) => {
+		const parseAddresses = (s: string): EmailAddress[] =>
+			s.split(",").map((e) => ({ name: null, email: e.trim() }));
+
 		const replyParams = await buildReply(email_id, body);
+
+		// Add cc/bcc if provided
+		if (cc) {
+			replyParams.cc = parseAddresses(cc);
+		}
+		if (bcc) {
+			replyParams.bcc = parseAddresses(bcc);
+		}
 
 		if (action === "preview") {
 			return {
@@ -415,6 +444,8 @@ server.tool(
 						text: `📧 REPLY PREVIEW - Review before sending:
 
 To: ${formatAddressList(replyParams.to)}
+CC: ${replyParams.cc ? formatAddressList(replyParams.cc) : "(none)"}
+BCC: ${replyParams.bcc ? formatAddressList(replyParams.bcc) : "(none)"}
 Subject: ${replyParams.subject}
 In-Reply-To: ${replyParams.inReplyTo || "(none)"}
 
@@ -517,6 +548,100 @@ server.tool(
 			],
 		};
 	},
+);
+
+// ============ Resources ============
+
+// Expose attachments as resources with blob content
+server.resource(
+	"attachment",
+	new ResourceTemplate("fastmail://attachment/{emailId}/{blobId}", {
+		list: undefined,
+	}),
+	{
+		description: "Email attachment content",
+		mimeType: "application/octet-stream",
+	},
+	async (uri, variables) => {
+		const { emailId, blobId } = variables as {
+			emailId: string;
+			blobId: string;
+		};
+		const result = await downloadAttachment(emailId, blobId);
+
+		if (result.isText) {
+			return {
+				contents: [
+					{
+						uri: uri.toString(),
+						mimeType: result.type,
+						text: result.content,
+					},
+				],
+			};
+		}
+
+		// Binary - return as blob (base64)
+		return {
+			contents: [
+				{
+					uri: uri.toString(),
+					mimeType: result.type,
+					blob: result.content, // already base64
+				},
+			],
+		};
+	},
+);
+
+// ============ Prompts ============
+
+server.prompt(
+	"fastmail-usage",
+	"Instructions for using the Fastmail MCP server effectively",
+	() => ({
+		messages: [
+			{
+				role: "user",
+				content: {
+					type: "text",
+					text: `# Fastmail MCP Server Usage Guide
+
+## Reading Emails
+1. Use \`list_mailboxes\` to see available folders
+2. Use \`list_emails\` with a mailbox name to see emails (e.g., "inbox", "Archive", "Sent")
+3. Use \`get_email\` with an email ID to read full content
+4. Use \`search_emails\` to find emails across all folders
+
+## Attachments
+1. Use \`list_attachments\` to see attachments on an email
+2. Use \`get_attachment\` with email_id and blob_id to read attachment content
+3. For binary files (PDFs, images), access via resource URI: fastmail://attachment/{emailId}/{blobId}
+
+## Sending Emails (ALWAYS preview first!)
+1. Use \`send_email\` with action="preview" to draft
+2. Review the preview with the user
+3. Only use action="confirm" after explicit user approval
+4. Supports to, cc, bcc fields
+
+## Replying
+1. Use \`reply_to_email\` with action="preview" to draft a reply
+2. The reply automatically threads correctly
+3. Add cc/bcc for reply-all scenarios
+
+## Managing Emails
+- \`move_email\` - Move to folder (Archive, Trash, etc.)
+- \`mark_as_read\` - Toggle read/unread
+- \`mark_as_spam\` - Requires preview→confirm (trains spam filter!)
+
+## Safety Rules
+- NEVER send without showing preview first
+- NEVER confirm send without explicit user approval
+- Be careful with mark_as_spam - it affects future filtering`,
+				},
+			},
+		],
+	}),
 );
 
 // ============ Start Server ============

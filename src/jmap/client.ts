@@ -77,11 +77,18 @@ export class JMAPClient {
 		for (const [methodName, data] of result.methodResponses) {
 			if (methodName === "error") {
 				const errorData = data as { type: string; description?: string };
+				console.error("[JMAP Error]", JSON.stringify(errorData, null, 2));
 				throw new Error(
 					`JMAP error: ${errorData.type}${errorData.description ? ` - ${errorData.description}` : ""}`,
 				);
 			}
 		}
+
+		// Log responses for debugging
+		console.error(
+			"[JMAP Response]",
+			JSON.stringify(result.methodResponses, null, 2),
+		);
 
 		return result.methodResponses;
 	}

@@ -123,6 +123,12 @@ export interface EmailBodyPart {
 	subParts?: EmailBodyPart[];
 }
 
+// Minimal body part for creating emails - only partId and type required
+export interface EmailBodyPartCreate {
+	partId: string;
+	type: string;
+}
+
 export interface EmailBodyValue {
 	value: string;
 	isEncodingProblem: boolean;
