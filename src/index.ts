@@ -4,6 +4,8 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import {
 	buildReply,
+	downloadAttachment,
+	getAttachments,
 	getEmail,
 	getMailboxByName,
 	listEmails,
@@ -436,6 +438,81 @@ To send this reply, call this tool again with action: "confirm" and the same par
 To: ${formatAddressList(replyParams.to)}
 Subject: ${replyParams.subject}
 Email ID: ${emailId}`,
+				},
+			],
+		};
+	},
+);
+
+// ============ Attachment Tools ============
+
+server.tool(
+	"list_attachments",
+	"List all attachments on an email. Returns attachment names, types, sizes, and blob IDs for downloading.",
+	{
+		email_id: z.string().describe("The email ID to get attachments from"),
+	},
+	async ({ email_id }) => {
+		const attachments = await getAttachments(email_id);
+
+		if (attachments.length === 0) {
+			return {
+				content: [
+					{ type: "text" as const, text: "No attachments on this email." },
+				],
+			};
+		}
+
+		const lines = attachments.map((a, i) => {
+			const size =
+				a.size > 1024 * 1024
+					? `${(a.size / 1024 / 1024).toFixed(1)} MB`
+					: a.size > 1024
+						? `${(a.size / 1024).toFixed(1)} KB`
+						: `${a.size} bytes`;
+			return `${i + 1}. ${a.name || "(unnamed)"}\n   Type: ${a.type}\n   Size: ${size}\n   Blob ID: ${a.blobId}`;
+		});
+
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: `Attachments (${attachments.length}):\n\n${lines.join("\n\n")}`,
+				},
+			],
+		};
+	},
+);
+
+server.tool(
+	"get_attachment",
+	"Download and read an attachment's content. Works best with text-based files (txt, csv, json, xml, html, etc). Binary files are returned as base64.",
+	{
+		email_id: z.string().describe("The email ID the attachment belongs to"),
+		blob_id: z
+			.string()
+			.describe("The blob ID of the attachment (from list_attachments)"),
+	},
+	async ({ email_id, blob_id }) => {
+		const result = await downloadAttachment(email_id, blob_id);
+
+		if (result.isText) {
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `Attachment: ${result.name || "(unnamed)"}\nType: ${result.type}\n\n--- Content ---\n${result.content}`,
+					},
+				],
+			};
+		}
+
+		// Binary content - return as base64 with warning
+		return {
+			content: [
+				{
+					type: "text" as const,
+					text: `Attachment: ${result.name || "(unnamed)"}\nType: ${result.type}\n\nThis is a binary file. Base64 content (first 1000 chars):\n${result.content.slice(0, 1000)}${result.content.length > 1000 ? "..." : ""}`,
 				},
 			],
 		};

@@ -377,6 +377,88 @@ export async function sendEmail(params: SendEmailParams): Promise<string> {
 	return emailId;
 }
 
+// ============ Attachment Methods ============
+
+export interface AttachmentInfo {
+	blobId: string;
+	name: string | null;
+	type: string;
+	size: number;
+}
+
+export async function getAttachments(
+	emailId: string,
+): Promise<AttachmentInfo[]> {
+	const email = await getEmail(emailId);
+	if (!email) {
+		throw new Error(`Email not found: ${emailId}`);
+	}
+
+	if (!email.attachments || email.attachments.length === 0) {
+		return [];
+	}
+
+	return email.attachments
+		.filter((a) => a.blobId)
+		.map((a) => ({
+			blobId: a.blobId as string,
+			name: a.name,
+			type: a.type,
+			size: a.size,
+		}));
+}
+
+export async function downloadAttachment(
+	emailId: string,
+	blobId: string,
+): Promise<{
+	content: string;
+	type: string;
+	name: string | null;
+	isText: boolean;
+}> {
+	const client = getClient();
+	const accountId = await client.getAccountId();
+
+	// Get attachment info for the name
+	const attachments = await getAttachments(emailId);
+	const attachment = attachments.find((a) => a.blobId === blobId);
+	if (!attachment) {
+		throw new Error(`Attachment not found: ${blobId}`);
+	}
+
+	const { data, type } = await client.downloadBlob(blobId, accountId);
+
+	// Determine if it's text-based content
+	const isText =
+		type.startsWith("text/") ||
+		type.includes("json") ||
+		type.includes("xml") ||
+		type.includes("javascript") ||
+		type.includes("csv") ||
+		type === "application/pdf"; // We'll try to extract text from PDFs
+
+	if (isText && type !== "application/pdf") {
+		// Return as text
+		const decoder = new TextDecoder();
+		return {
+			content: decoder.decode(data),
+			type,
+			name: attachment.name,
+			isText: true,
+		};
+	}
+
+	// For binary files (including PDFs for now), return base64
+	const base64 = Buffer.from(data).toString("base64");
+	return {
+		content: base64,
+		type,
+		name: attachment.name,
+		isText: false,
+	};
+}
+
 // Helper to build a reply
 export async function buildReply(
 	originalEmailId: string,

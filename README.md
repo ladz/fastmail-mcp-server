@@ -82,12 +82,14 @@ No emails can be sent accidentally.
 
 ### Read Operations (no confirmation needed)
 
-| Tool             | Description                                  |
-| ---------------- | -------------------------------------------- |
-| `list_mailboxes` | List all folders with unread counts          |
-| `list_emails`    | List emails in a mailbox (returns summaries) |
-| `get_email`      | Get full email content by ID                 |
-| `search_emails`  | Search across all mailboxes                  |
+| Tool               | Description                                  |
+| ------------------ | -------------------------------------------- |
+| `list_mailboxes`   | List all folders with unread counts          |
+| `list_emails`      | List emails in a mailbox (returns summaries) |
+| `get_email`        | Get full email content by ID                 |
+| `search_emails`    | Search across all mailboxes                  |
+| `list_attachments` | List attachments on an email                 |
+| `get_attachment`   | Download and read attachment content         |
 
 ### Write Operations
 

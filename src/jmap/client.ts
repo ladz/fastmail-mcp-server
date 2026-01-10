@@ -99,6 +99,36 @@ export class JMAPClient {
 		}
 		return response[1] as T;
 	}
+
+	// Download a blob (attachment) by ID
+	async downloadBlob(
+		blobId: string,
+		accountId: string,
+	): Promise<{ data: ArrayBuffer; type: string }> {
+		const session = await this.getSession();
+
+		// JMAP download URL template: {downloadUrl}/{accountId}/{blobId}/{name}?accept={type}
+		const url = session.downloadUrl
+			.replace("{accountId}", accountId)
+			.replace("{blobId}", blobId)
+			.replace("{name}", "attachment")
+			.replace("{type}", "application/octet-stream");
+
+		const response = await fetch(url, {
+			headers: {
+				Authorization: `Bearer ${this.token}`,
+			},
+		});
+
+		if (!response.ok) {
+			throw new Error(`Failed to download blob: ${response.status}`);
+		}
+
+		return {
+			data: await response.arrayBuffer(),
+			type: response.headers.get("content-type") || "application/octet-stream",
+		};
+	}
 }
 
 // Singleton client instance
