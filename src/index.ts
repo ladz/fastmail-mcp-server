@@ -812,10 +812,39 @@ server.tool(
 		}
 
 		// Images - return as image content (resize if >1MB for model limits)
-		if (result.type.startsWith("image/")) {
+		// Check by extension since JMAP blob download often returns application/octet-stream
+		const imageExts = [
+			".jpg",
+			".jpeg",
+			".png",
+			".gif",
+			".webp",
+			".bmp",
+			".tiff",
+			".tif",
+		];
+		const ext = result.name
+			? `.${result.name.split(".").pop()?.toLowerCase()}`
+			: "";
+		const isImage = result.type.startsWith("image/") || imageExts.includes(ext);
+
+		if (isImage) {
 			const MAX_SIZE = 1024 * 1024; // 1MB
 			let imageData: Buffer | Uint8Array = result.data;
-			let mimeType = result.type;
+			// Infer mimeType from extension if we got octet-stream
+			const extToMime: Record<string, string> = {
+				".jpg": "image/jpeg",
+				".jpeg": "image/jpeg",
+				".png": "image/png",
+				".gif": "image/gif",
+				".webp": "image/webp",
+				".bmp": "image/bmp",
+				".tiff": "image/tiff",
+				".tif": "image/tiff",
+			};
+			let mimeType = result.type.startsWith("image/")
+				? result.type
+				: extToMime[ext] || "image/jpeg";
 			let resized = false;
 
 			if (result.data.byteLength > MAX_SIZE) {
