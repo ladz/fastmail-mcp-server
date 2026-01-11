@@ -869,7 +869,7 @@ server.tool(
 					{
 						type: "image" as const,
 						data: base64,
-						mimeType: mimeType,
+						mimeType,
 					},
 				],
 			};
