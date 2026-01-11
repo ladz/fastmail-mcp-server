@@ -66,6 +66,16 @@ Token format: `fmu1-xxxxxxxx-xxxxxxxxxxxx...`
 
 ### 2. Configure Claude Desktop
 
+Install the server globally:
+
+```bash
+# Via mise (recommended)
+mise use -g npm:fastmail-mcp-server
+
+# Or via npm
+npm install -g fastmail-mcp-server
+```
+
 Open the Claude Desktop config file:
 
 ```bash
@@ -83,8 +93,7 @@ Add the fastmail server config:
 {
   "mcpServers": {
     "fastmail": {
-      "command": "bunx",
-      "args": ["-y", "fastmail-mcp-server"],
+      "command": "fastmail-mcp-server",
       "env": {
         "FASTMAIL_API_TOKEN": "fmu1-your-token-here"
       }
@@ -92,6 +101,8 @@ Add the fastmail server config:
   }
 }
 ```
+
+> **Note:** If Claude Desktop can't find the command, use the full path from `which fastmail-mcp-server`
 
 ### 3. Restart Claude Desktop
 
