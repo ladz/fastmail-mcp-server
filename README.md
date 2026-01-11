@@ -11,6 +11,27 @@ MCP server for Fastmail. Read, search, organize, and send emails through Claude 
 - **Image attachments** - returned as viewable content for Claude's built-in OCR
 - **CC/BCC support** - full addressing on send and reply
 
+### Comparison
+
+| Feature                           | radiosilence | @jahfer | willmeyers  |
+| --------------------------------- | :----------: | :-----: | :---------: |
+| Read emails                       |      ✅      |   ✅    |     ✅      |
+| Search emails                     |      ✅      |   ❓    |     ❓      |
+| Send emails                       |      ✅      |   ❌    |     ❌      |
+| Reply to threads                  |      ✅      |   ❌    |     ❌      |
+| CC/BCC support                    |      ✅      |   ❌    |     ❌      |
+| Safe send (preview→confirm)       |      ✅      |   ❌    |     ❌      |
+| Move/organize emails              |      ✅      |   ❌    |     ❌      |
+| Mark as spam                      |      ✅      |   ❌    |     ❌      |
+| List attachments                  |      ✅      |   ❌    |     ❌      |
+| **Extract text from PDF/DOCX**    |      ✅      |   ❌    |     ❌      |
+| **Extract text from legacy .doc** |      ✅      |   ❌    |     ❌      |
+| **Images for Claude OCR**         |      ✅      |   ❌    |     ❌      |
+| Bun/TypeScript                    |      ✅      |   ✅    | ❌ (Python) |
+| Actively maintained               |      ✅      |   ❓    |     ❓      |
+
+❓ = undocumented/unclear
+
 ## Prerequisites
 
 Requires [Bun](https://bun.sh) runtime:
