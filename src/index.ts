@@ -828,9 +828,12 @@ server.tool(
 			? `.${result.name.split(".").pop()?.toLowerCase()}`
 			: "";
 		const isImage = result.type.startsWith("image/") || imageExts.includes(ext);
+		console.error(
+			`[get_attachment] ext=${ext}, isImage=${isImage}, size=${result.data.byteLength}`,
+		);
 
 		if (isImage) {
-			const MAX_SIZE = 1024 * 1024; // 1MB
+			const MAX_SIZE = 700 * 1024; // 700KB binary → ~930KB base64 (under 1MB limit)
 			let imageData: Buffer | Uint8Array = result.data;
 			// Infer mimeType from extension if we got octet-stream
 			const extToMime: Record<string, string> = {
@@ -848,7 +851,11 @@ server.tool(
 				: extToMime[ext] || "image/jpeg";
 			let resized = false;
 
+			console.error(
+				`[get_attachment] checking size: ${result.data.byteLength} > ${MAX_SIZE} = ${result.data.byteLength > MAX_SIZE}`,
+			);
 			if (result.data.byteLength > MAX_SIZE) {
+				console.error(`[get_attachment] resizing image...`);
 				try {
 					// Resize to fit under 1MB, convert to JPEG for better compression
 					let quality = 85;
@@ -879,11 +886,17 @@ server.tool(
 					imageData = resizedBuffer;
 					mimeType = "image/jpeg";
 					resized = true;
+					console.error(
+						`[get_attachment] resized to ${resizedBuffer.byteLength} bytes`,
+					);
 				} catch (err) {
 					console.error(`[get_attachment] Image resize failed:`, err);
 					// Fall through with original
 				}
 			}
+			console.error(
+				`[get_attachment] returning image, resized=${resized}, size=${imageData.byteLength}`,
+			);
 
 			const base64 = Buffer.from(imageData).toString("base64");
 			const sizeInfo = resized

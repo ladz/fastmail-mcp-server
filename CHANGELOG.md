@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.2] - 2026-01-11
+
+### Fixed
+
+- Account for base64 encoding overhead in image size limit (700KB binary → ~930KB base64, under 1MB MCP limit)
+- Read version from package.json instead of hardcoding
+
 ## [0.5.1] - 2026-01-11
 
 ### Fixed
