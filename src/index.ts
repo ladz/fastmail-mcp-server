@@ -7,6 +7,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { parseOffice } from "officeparser";
 import sharp from "sharp";
 import { z } from "zod";
+import pkg from "../package.json";
 import {
 	buildForward,
 	buildReply,
@@ -35,7 +36,7 @@ import type {
 
 const server = new McpServer({
 	name: "fastmail",
-	version: "0.4.0",
+	version: pkg.version,
 });
 
 // ============ Formatters ============
