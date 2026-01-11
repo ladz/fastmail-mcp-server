@@ -814,7 +814,7 @@ server.tool(
 		// Images - return as image content (resize if >1MB for model limits)
 		if (result.type.startsWith("image/")) {
 			const MAX_SIZE = 1024 * 1024; // 1MB
-			let imageData = result.data;
+			let imageData: Buffer | Uint8Array = result.data;
 			let mimeType = result.type;
 			let resized = false;
 
