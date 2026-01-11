@@ -82,14 +82,28 @@ No emails can be sent accidentally.
 
 ### Read Operations (no confirmation needed)
 
-| Tool               | Description                                  |
-| ------------------ | -------------------------------------------- |
-| `list_mailboxes`   | List all folders with unread counts          |
-| `list_emails`      | List emails in a mailbox (returns summaries) |
-| `get_email`        | Get full email content by ID                 |
-| `search_emails`    | Search across all mailboxes                  |
-| `list_attachments` | List attachments on an email                 |
-| `get_attachment`   | Download and read attachment content         |
+| Tool               | Description                                      |
+| ------------------ | ------------------------------------------------ |
+| `list_mailboxes`   | List all folders with unread counts              |
+| `list_emails`      | List emails in a mailbox (returns summaries)     |
+| `get_email`        | Get full email content by ID                     |
+| `search_emails`    | Search across all mailboxes                      |
+| `list_attachments` | List attachments on an email                     |
+| `get_attachment`   | Download and read attachment content (see below) |
+
+### Attachment Handling
+
+`get_attachment` automatically extracts readable content from attachments:
+
+| Format                                      | Handling                                                                      |
+| ------------------------------------------- | ----------------------------------------------------------------------------- |
+| Text files (txt, json, csv, xml)            | Returned inline                                                               |
+| Documents (PDF, DOCX, XLSX, PPTX, RTF, ODT) | Text extracted via [officeparser](https://github.com/harshankur/officeParser) |
+| Legacy Word (.doc)                          | Text extracted via macOS `textutil`                                           |
+| Images (PNG, JPG, etc)                      | Returned as image content for Claude to view/OCR                              |
+| Other binary                                | Base64 fallback                                                               |
+
+Claude receives actual text content, not binary blobs - just like when you drag-and-drop files into Claude Desktop.
 
 ### Write Operations
 
