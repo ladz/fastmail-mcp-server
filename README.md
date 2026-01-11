@@ -11,7 +11,7 @@ MCP server for Fastmail. Read, search, organize, and send emails through Claude 
 - **Thread support** - get_email returns full conversation context
 - **Attachment text extraction** - PDFs, Word docs, Excel, PowerPoint extracted as readable text
 - **Legacy .doc support** - uses macOS `textutil` for old Word formats
-- **Image attachments** - returned as viewable content for Claude's built-in OCR
+- **Image attachments** - auto-resized to fit model limits, returned for Claude's built-in vision/OCR
 - **CC/BCC support** - full addressing on send, reply, and forward
 
 ### Comparison
@@ -146,7 +146,7 @@ No emails can be sent accidentally.
 | Text files (txt, json, csv, xml)            | Returned inline                                                               |
 | Documents (PDF, DOCX, XLSX, PPTX, RTF, ODT) | Text extracted via [officeparser](https://github.com/harshankur/officeParser) |
 | Legacy Word (.doc)                          | Text extracted via macOS `textutil`                                           |
-| Images (PNG, JPG, etc)                      | Returned as image content for Claude to view/OCR                              |
+| Images (PNG, JPG, etc)                      | Auto-resized if >700KB, returned for Claude's vision/OCR                      |
 | Other binary                                | Base64 fallback                                                               |
 
 Claude receives actual text content, not binary blobs - just like when you drag-and-drop files into Claude Desktop.
