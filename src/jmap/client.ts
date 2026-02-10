@@ -1,157 +1,157 @@
 import type {
-	JMAPMethodCall,
-	JMAPMethodResponse,
-	JMAPRequest,
-	JMAPResponse,
-	JMAPSession,
+  JMAPMethodCall,
+  JMAPMethodResponse,
+  JMAPRequest,
+  JMAPResponse,
+  JMAPSession,
 } from "./types.js";
 
 const FASTMAIL_SESSION_URL = "https://api.fastmail.com/jmap/session";
 
 export class JMAPClient {
-	private session: JMAPSession | null = null;
-	private token: string;
+  private session: JMAPSession | null = null;
+  private token: string;
 
-	constructor(token: string) {
-		this.token = token;
-	}
+  constructor(token: string) {
+    this.token = token;
+  }
 
-	async getSession(): Promise<JMAPSession> {
-		if (this.session) {
-			return this.session;
-		}
+  async getSession(): Promise<JMAPSession> {
+    if (this.session) {
+      return this.session;
+    }
 
-		const response = await fetch(FASTMAIL_SESSION_URL, {
-			headers: {
-				Authorization: `Bearer ${this.token}`,
-			},
-		});
+    const response = await fetch(FASTMAIL_SESSION_URL, {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+      },
+    });
 
-		if (!response.ok) {
-			const text = await response.text();
-			throw new Error(`Failed to get JMAP session: ${response.status} ${text}`);
-		}
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Failed to get JMAP session: ${response.status} ${text}`);
+    }
 
-		this.session = (await response.json()) as JMAPSession;
-		return this.session;
-	}
+    this.session = (await response.json()) as JMAPSession;
+    return this.session;
+  }
 
-	async getAccountId(): Promise<string> {
-		const session = await this.getSession();
-		const accountId = session.primaryAccounts["urn:ietf:params:jmap:mail"];
-		if (!accountId) {
-			throw new Error("No mail account found in session");
-		}
-		return accountId;
-	}
+  async getAccountId(): Promise<string> {
+    const session = await this.getSession();
+    const accountId = session.primaryAccounts["urn:ietf:params:jmap:mail"];
+    if (!accountId) {
+      throw new Error("No mail account found in session");
+    }
+    return accountId;
+  }
 
-	async request(methodCalls: JMAPMethodCall[]): Promise<JMAPMethodResponse[]> {
-		const session = await this.getSession();
+  async request(methodCalls: JMAPMethodCall[]): Promise<JMAPMethodResponse[]> {
+    const session = await this.getSession();
 
-		const request: JMAPRequest = {
-			using: [
-				"urn:ietf:params:jmap:core",
-				"urn:ietf:params:jmap:mail",
-				"urn:ietf:params:jmap:submission",
-				"https://www.fastmail.com/dev/maskedemail",
-			],
-			methodCalls,
-		};
+    const request: JMAPRequest = {
+      using: [
+        "urn:ietf:params:jmap:core",
+        "urn:ietf:params:jmap:mail",
+        "urn:ietf:params:jmap:submission",
+        "https://www.fastmail.com/dev/maskedemail",
+      ],
+      methodCalls,
+    };
 
-		const response = await fetch(session.apiUrl, {
-			method: "POST",
-			headers: {
-				Authorization: `Bearer ${this.token}`,
-				"Content-Type": "application/json",
-			},
-			body: JSON.stringify(request),
-		});
+    const response = await fetch(session.apiUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+    });
 
-		if (!response.ok) {
-			const text = await response.text();
-			throw new Error(`JMAP request failed: ${response.status} ${text}`);
-		}
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`JMAP request failed: ${response.status} ${text}`);
+    }
 
-		const result = (await response.json()) as JMAPResponse;
+    const result = (await response.json()) as JMAPResponse;
 
-		// Check for JMAP-level errors in responses
-		for (const [methodName, data] of result.methodResponses) {
-			if (methodName === "error") {
-				const errorData = data as { type: string; description?: string };
-				console.error("[JMAP Error]", JSON.stringify(errorData, null, 2));
-				throw new Error(
-					`JMAP error: ${errorData.type}${errorData.description ? ` - ${errorData.description}` : ""}`,
-				);
-			}
-		}
+    // Check for JMAP-level errors in responses
+    for (const [methodName, data] of result.methodResponses) {
+      if (methodName === "error") {
+        const errorData = data as { type: string; description?: string };
+        console.error("[JMAP Error]", JSON.stringify(errorData, null, 2));
+        throw new Error(
+          `JMAP error: ${errorData.type}${errorData.description ? ` - ${errorData.description}` : ""}`,
+        );
+      }
+    }
 
-		// Log responses for debugging
-		console.error(
-			"[JMAP Response]",
-			JSON.stringify(result.methodResponses, null, 2),
-		);
+    // Log responses for debugging
+    console.error(
+      "[JMAP Response]",
+      JSON.stringify(result.methodResponses, null, 2),
+    );
 
-		return result.methodResponses;
-	}
+    return result.methodResponses;
+  }
 
-	// Helper to make a single method call and extract the response
-	async call<T>(
-		method: string,
-		args: Record<string, unknown>,
-		callId = "0",
-	): Promise<T> {
-		const responses = await this.request([[method, args, callId]]);
-		const response = responses[0];
-		if (!response) {
-			throw new Error(`No response for method ${method}`);
-		}
-		return response[1] as T;
-	}
+  // Helper to make a single method call and extract the response
+  async call<T>(
+    method: string,
+    args: Record<string, unknown>,
+    callId = "0",
+  ): Promise<T> {
+    const responses = await this.request([[method, args, callId]]);
+    const response = responses[0];
+    if (!response) {
+      throw new Error(`No response for method ${method}`);
+    }
+    return response[1] as T;
+  }
 
-	// Download a blob (attachment) by ID
-	async downloadBlob(
-		blobId: string,
-		accountId: string,
-	): Promise<{ data: ArrayBuffer; type: string }> {
-		const session = await this.getSession();
+  // Download a blob (attachment) by ID
+  async downloadBlob(
+    blobId: string,
+    accountId: string,
+  ): Promise<{ data: ArrayBuffer; type: string }> {
+    const session = await this.getSession();
 
-		// JMAP download URL template: {downloadUrl}/{accountId}/{blobId}/{name}?accept={type}
-		const url = session.downloadUrl
-			.replace("{accountId}", accountId)
-			.replace("{blobId}", blobId)
-			.replace("{name}", "attachment")
-			.replace("{type}", "application/octet-stream");
+    // JMAP download URL template: {downloadUrl}/{accountId}/{blobId}/{name}?accept={type}
+    const url = session.downloadUrl
+      .replace("{accountId}", accountId)
+      .replace("{blobId}", blobId)
+      .replace("{name}", "attachment")
+      .replace("{type}", "application/octet-stream");
 
-		const response = await fetch(url, {
-			headers: {
-				Authorization: `Bearer ${this.token}`,
-			},
-		});
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+      },
+    });
 
-		if (!response.ok) {
-			throw new Error(`Failed to download blob: ${response.status}`);
-		}
+    if (!response.ok) {
+      throw new Error(`Failed to download blob: ${response.status}`);
+    }
 
-		return {
-			data: await response.arrayBuffer(),
-			type: response.headers.get("content-type") || "application/octet-stream",
-		};
-	}
+    return {
+      data: await response.arrayBuffer(),
+      type: response.headers.get("content-type") || "application/octet-stream",
+    };
+  }
 }
 
 // Singleton client instance
 let client: JMAPClient | null = null;
 
 export function getClient(): JMAPClient {
-	if (!client) {
-		const token = process.env.FASTMAIL_API_TOKEN;
-		if (!token) {
-			throw new Error(
-				"FASTMAIL_API_TOKEN environment variable is required. " +
-					"Generate one at Fastmail → Settings → Privacy & Security → Integrations → API tokens",
-			);
-		}
-		client = new JMAPClient(token);
-	}
-	return client;
+  if (!client) {
+    const token = process.env.FASTMAIL_API_TOKEN;
+    if (!token) {
+      throw new Error(
+        "FASTMAIL_API_TOKEN environment variable is required. " +
+          "Generate one at Fastmail → Settings → Privacy & Security → Integrations → API tokens",
+      );
+    }
+    client = new JMAPClient(token);
+  }
+  return client;
 }
