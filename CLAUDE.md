@@ -11,7 +11,7 @@ bun install
 # Run the MCP server locally (requires FASTMAIL_API_TOKEN env var)
 FASTMAIL_API_TOKEN=fmu1-... bun run start
 
-# Run tests
+# Run tests (uses MCP SDK client to test server)
 FASTMAIL_API_TOKEN=fmu1-... bun run test
 
 # Format code (using Biome)
@@ -23,74 +23,338 @@ bun run lint
 
 ## Architecture Overview
 
-This is a **Model Context Protocol (MCP) server** that provides Claude Desktop with access to Fastmail via the JMAP API.
+This is a **Model Context Protocol (MCP) server** that provides Claude Desktop with access to Fastmail via the JMAP API (RFC 8620/8621).
 
 ### Layer Structure
 
 1. **MCP Layer** (`src/index.ts`)
    - Entry point with shebang `#!/usr/bin/env bun`
    - Defines all MCP tools (list_emails, send_email, etc.)
-   - Handles tool schemas using Zod
+   - Tool schemas defined with Zod for type safety and validation
    - Implements formatters for email/mailbox display
    - Manages preview→confirm flow for write operations
+   - Provides MCP resources (attachment URIs) and prompts
 
 2. **JMAP Client Layer** (`src/jmap/client.ts`)
-   - `JMAPClient` class handles API communication
-   - Manages session authentication and account ID resolution
-   - Provides low-level `request()` and higher-level `call()` methods
-   - Error handling for JMAP protocol errors
+   - `JMAPClient` class handles all API communication
+   - Session management with lazy initialization (cached after first fetch)
+   - `getAccountId()` extracts primary mail account from session
+   - `request()` - low-level batch method calls
+   - `call()` - high-level single method wrapper
+   - `downloadBlob()` - specialized attachment download using JMAP download URL templates
+   - Error handling for both HTTP and JMAP protocol errors
+   - Singleton pattern via `getClient()` - one client instance per process
 
 3. **JMAP Methods Layer** (`src/jmap/methods.ts`)
-   - High-level domain functions (listEmails, sendEmail, etc.)
-   - Handles complex operations like threading and search filters
-   - Manages email property sets for different use cases
-   - Uses singleton `getClient()` pattern
+   - High-level domain functions that compose JMAP operations
+   - Handles the **query→get pattern**: first query for IDs, then fetch details
+   - Manages **email property sets**: `EMAIL_LIST_PROPERTIES` (minimal) vs `EMAIL_FULL_PROPERTIES` (complete)
+   - Threading logic via `Thread/get` → `Email/get` with chronological sort
+   - Search filter construction from user-friendly parameters to JMAP filters
+   - Helper functions for reply/forward that build proper email headers
 
 4. **Type Definitions** (`src/jmap/types.ts`)
-   - TypeScript types for JMAP protocol structures
-   - Email, Mailbox, Identity, MaskedEmail types
+   - Full TypeScript types for JMAP protocol structures (RFC 8620/8621)
+   - Email, Mailbox, Identity, MaskedEmail domain types
+   - JMAP protocol types: `JMAPMethodCall`, `JMAPResponse`, etc.
+   - Helper types: `EmailCreate`, `SendEmailParams`, `SearchFilter`
 
 ### Key Design Patterns
 
-**Preview→Confirm Flow**: All destructive/send operations use a two-step safety mechanism:
-- First call with `action: "preview"` shows what will happen
-- Second call with `action: "confirm"` performs the action
-- See: `send_email`, `reply_to_email`, `forward_email`, `mark_as_spam`
+#### 1. Preview→Confirm Flow (Safety Mechanism)
 
-**Attachment Handling**: The `get_attachment` tool intelligently processes different file types:
-- Plain text → returned inline
-- Office docs (PDF, DOCX, etc.) → text extracted via `officeparser`
-- Legacy .doc files → text extracted via macOS `textutil` command
-- Images → auto-resized if >700KB, returned as base64 for Claude's vision
-- Other binaries → base64 fallback
+All destructive/send operations use a mandatory two-step flow:
+- **Step 1**: Call with `action: "preview"` → returns formatted preview of what will happen
+- **Step 2**: User approves → call again with `action: "confirm"` → executes the action
 
-**Thread Context**: `get_email` automatically fetches and displays the full email thread, sorted chronologically with the selected email marked.
+Implemented in: `send_email`, `reply_to_email`, `forward_email`, `mark_as_spam`
 
-**Mailbox Resolution**: Functions accept either exact mailbox names ("INBOX") or role names ("inbox"), with case-insensitive fallback.
+This prevents accidental sends and gives users control over destructive actions.
 
-## Testing
+#### 2. Query→Get Pattern (JMAP Optimization)
 
-The codebase includes `src/test.ts` for manual testing. You need a valid Fastmail API token in the environment to run it.
+JMAP separates searching from fetching to optimize bandwidth:
+1. `Email/query` or `Mailbox/query` returns just IDs
+2. `Email/get` or `Mailbox/get` fetches full objects with specified properties
+
+Example from `listEmails()`:
+```typescript
+// Step 1: Query for IDs
+const queryResult = await client.call("Email/query", {
+  filter: { inMailbox: mailbox.id },
+  sort: [{ property: "receivedAt", isAscending: false }],
+});
+
+// Step 2: Fetch details with specific properties
+const getResult = await client.call("Email/get", {
+  ids: queryResult.ids,
+  properties: EMAIL_LIST_PROPERTIES, // Only what we need
+});
+```
+
+#### 3. Property Sets (Minimize Data Transfer)
+
+Different use cases need different email properties:
+- **EMAIL_LIST_PROPERTIES**: For listings (id, from, subject, preview, etc.) - small, fast
+- **EMAIL_FULL_PROPERTIES**: For single email view (adds bodyValues, attachments, headers, etc.)
+
+The `fetchTextBodyValues: true` parameter fetches decoded body content in one request.
+
+#### 4. Attachment Handling (Content-Aware)
+
+The `get_attachment` tool adapts to content type:
+
+1. **Text files** (text/*, json, xml, csv): Decoded and returned inline
+2. **Office documents** (PDF, DOCX, XLSX, PPTX, RTF, ODT, ODS, ODP):
+   - Modern formats → `officeparser` library extracts text
+   - Legacy .doc → macOS `textutil` command (better OLE format support)
+3. **Images** (detected by MIME type OR file extension):
+   - If >700KB binary → auto-resize with `sharp` library
+   - Progressive quality reduction: 85% → 70% → 55% → 40% → 30%
+   - Resize dimensions: 2048×2048 → 1600×1600
+   - Convert to JPEG for better compression
+   - Return as base64 for Claude's vision capabilities
+4. **Other binaries**: Base64 fallback
+
+**Why extension checking?** JMAP blob downloads often return `application/octet-stream` for all attachments, so we check filename extensions as a fallback.
+
+#### 5. Thread Context (Conversation Awareness)
+
+When you call `get_email`, it automatically:
+1. Gets the email's `threadId`
+2. Calls `Thread/get` to find all email IDs in the thread
+3. Fetches all emails with `Email/get`
+4. Sorts by `receivedAt` ascending (oldest first)
+5. Marks which email was originally requested
+
+This gives Claude full conversation context without extra tool calls.
+
+#### 6. Mailbox Resolution (Flexible Lookup)
+
+`getMailboxByName()` tries multiple strategies in order:
+1. Exact name match: "INBOX" matches "INBOX"
+2. Role match: "inbox" matches role="inbox"
+3. Case-insensitive: "inbox" matches "INBOX"
+
+This allows both user-friendly names ("inbox") and exact names ("INBOX").
+
+#### 7. Email Sending (Multi-Step JMAP Transaction)
+
+Sending emails is a complex multi-step operation in a single JMAP request:
+
+```typescript
+await client.request([
+  // Step 1: Create draft email
+  ["Email/set", {
+    create: { draft: emailCreate }
+  }, "0"],
+
+  // Step 2: Submit for sending (references draft with "#draft")
+  ["EmailSubmission/set", {
+    create: {
+      submission: {
+        identityId: identity.id,
+        emailId: "#draft",  // Backreference to created email
+      }
+    },
+    // Step 3: On success, move from Drafts to Sent
+    onSuccessUpdateEmail: {
+      "#submission": {
+        mailboxIds: { [sentMailbox.id]: true },
+        "keywords/$draft": null,
+      }
+    }
+  }, "1"]
+]);
+```
+
+This atomic operation ensures emails either fully send or fully fail.
+
+#### 8. Keyword System (JMAP Email Flags)
+
+JMAP uses keywords instead of IMAP flags:
+- `$seen` - email has been read
+- `$flagged` - email is starred/important
+- `$draft` - email is a draft
+- `$junk` - email is spam (trains filter!)
+- `$notjunk` - explicitly not spam
+
+Modifying keywords is done via `Email/set` with `keywords` object or `keywords/keywordname` patch.
+
+#### 9. Search Filter Construction
+
+`searchEmails()` converts user-friendly filters to JMAP format:
+
+**General query** (`query: "text"`) → OR condition across multiple fields:
+```typescript
+{
+  operator: "OR",
+  conditions: [
+    { subject: "text" },
+    { from: "text" },
+    { to: "text" },
+    { body: "text" }
+  ]
+}
+```
+
+**Date filters** → Normalized to ISO 8601:
+- Input: `"2024-01-01"` → Output: `"2024-01-01T00:00:00Z"`
+
+**Keyword filters**:
+- `unread: true` → `notKeyword: "$seen"`
+- `flagged: true` → `hasKeyword: "$flagged"`
+
+#### 10. Reply/Forward Helpers
+
+`buildReply()` constructs proper email threading:
+- Determines reply-to from `replyTo` header (fallback to `from`)
+- Prepends "Re:" to subject if not present
+- Builds references chain: original.references + original.messageId
+- Sets `inReplyTo` to original message ID
+
+`buildForward()` creates forwarded email structure:
+- Prepends "Fwd:" to subject
+- Extracts original body from bodyValues
+- Formats attribution: "---------- Forwarded message ---------"
+- Includes original From, Date, Subject headers
+
+## Error Handling Patterns
+
+### JMAP Protocol Errors
+
+The client checks for error responses in `methodResponses`:
+```typescript
+for (const [methodName, data] of result.methodResponses) {
+  if (methodName === "error") {
+    throw new Error(`JMAP error: ${data.type} - ${data.description}`);
+  }
+}
+```
+
+### Operation-Specific Errors
+
+For `Email/set`, `EmailSubmission/set`, and `MaskedEmail/set`, check both:
+- `notCreated` - creation failures
+- `notUpdated` - update failures
+
+These contain structured error objects with `type` and optional `description`.
+
+### HTTP Errors
+
+Both session initialization and JMAP requests check `response.ok` and throw with status code + body text.
+
+## MCP-Specific Features
+
+### Resources
+
+Exposes attachments as MCP resources with URI scheme:
+```
+fastmail://attachment/{emailId}/{blobId}
+```
+
+These can be referenced in MCP resource requests for direct blob access.
+
+### Prompts
+
+Provides a `fastmail-usage` prompt with guidance on:
+- How to read emails effectively
+- The mandatory preview→confirm flow
+- Search capabilities
+- Attachment access patterns
+
+### Tool Organization
+
+Tools are organized into functional groups:
+- **Read tools**: list_mailboxes, list_emails, get_email, search_emails
+- **Attachment tools**: list_attachments, get_attachment
+- **Modification tools**: move_email, mark_as_read, mark_as_spam
+- **Sending tools**: send_email, reply_to_email, forward_email
+- **Masked email tools**: list/create/enable/disable/delete
+
+## Testing Strategy
+
+`src/test.ts` is a simple integration test that:
+1. Spawns the MCP server as a subprocess
+2. Connects via `StdioClientTransport`
+3. Tests basic operations: list_mailboxes, list_emails, search_emails
+4. Verifies tool calls return expected response structure
+
+Run with: `FASTMAIL_API_TOKEN=... bun run test`
 
 ## Code Style
 
-- Uses **Biome** for formatting and linting (configured in `biome.json`)
+- **Biome** for formatting and linting (configured in `biome.json`)
 - Indentation: **tabs** (not spaces)
-- Uses Bun runtime features (native spawn, file APIs)
-- Console errors (stderr) used for debug logging
-- MCP tools return structured `{ content: [...] }` responses
+- Bun-specific features: native `spawn`, file APIs, `$` shell templating
+- Console.error for debug logging (stderr doesn't pollute MCP stdio transport)
+- MCP tools return `{ content: [...] }` with text and/or image content blocks
 
-## Important Notes
+## Important Implementation Details
 
-- The package is distributed as a **global CLI tool** via npm/mise
-- Main export is `src/index.ts` with executable shebang
-- Requires Bun runtime (specified in `package.json` engines)
-- API token must be provided via `FASTMAIL_API_TOKEN` environment variable
-- All JMAP requests use these capabilities: `urn:ietf:params:jmap:core`, `urn:ietf:params:jmap:mail`, `urn:ietf:params:jmap:submission`, `https://www.fastmail.com/dev/maskedemail`
+### Session Caching
 
-## Image Resizing Strategy
+The JMAP session is fetched once and cached:
+```typescript
+async getSession(): Promise<JMAPSession> {
+  if (this.session) return this.session;  // Cached
+  // ... fetch from API
+  this.session = result;
+  return this.session;
+}
+```
 
-Images larger than 700KB binary are automatically resized to stay under the ~1MB limit when base64-encoded (700KB binary × 1.33 base64 overhead ≈ 930KB). The resize logic:
-1. Resize to max 2048×2048 at 85% JPEG quality
-2. If still too large, progressively reduce quality (down to 30%) and dimensions (1600×1600)
-3. This ensures Claude receives images without hitting API limits
+### Singleton Client
+
+One client instance per process via closure:
+```typescript
+let client: JMAPClient | null = null;
+
+export function getClient(): JMAPClient {
+  if (!client) {
+    const token = process.env.FASTMAIL_API_TOKEN;
+    if (!token) throw new Error("FASTMAIL_API_TOKEN required");
+    client = new JMAPClient(token);
+  }
+  return client;
+}
+```
+
+### Download URL Template
+
+JMAP provides URL templates with placeholders:
+```typescript
+const url = session.downloadUrl
+  .replace("{accountId}", accountId)
+  .replace("{blobId}", blobId)
+  .replace("{name}", "attachment")
+  .replace("{type}", "application/octet-stream");
+```
+
+### Image Resizing Math
+
+Target: <700KB binary (×1.33 base64 overhead = ~930KB < 1MB API limit)
+
+Strategy:
+1. Check binary size before base64 encoding
+2. Resize progressively until under limit
+3. Convert to JPEG for consistency
+
+### JMAP Capabilities
+
+All requests declare required capabilities:
+- `urn:ietf:params:jmap:core` - Core JMAP (RFC 8620)
+- `urn:ietf:params:jmap:mail` - Mail extension (RFC 8621)
+- `urn:ietf:params:jmap:submission` - Email submission
+- `https://www.fastmail.com/dev/maskedemail` - Fastmail-specific masked emails
+
+## Common Pitfalls
+
+1. **Don't fetch full emails for listings** - Use `EMAIL_LIST_PROPERTIES` to minimize bandwidth
+2. **Always check both HTTP and JMAP errors** - JMAP returns 200 OK with error responses
+3. **Image size includes base64 overhead** - 1MB binary → ~1.33MB base64
+4. **Mailbox IDs vs names** - Always resolve names to IDs before JMAP calls
+5. **Keywords are additive** - Merge with existing keywords, don't replace
+6. **Thread/get returns IDs** - Still need Email/get to fetch actual emails
+7. **Preview is mandatory** - Never skip preview→confirm for safety
+8. **$junk trains spam filter** - mark_as_spam affects future email classification
