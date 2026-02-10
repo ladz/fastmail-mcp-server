@@ -247,6 +247,33 @@ bun run format
 bun run lint
 ```
 
+### Developing with a Local Fork
+
+To use your local fork instead of the global installation in Claude Desktop:
+
+1. **Update your Claude Desktop config** to point directly to your local project:
+
+```json
+{
+  "mcpServers": {
+    "fastmail": {
+      "command": "bun",
+      "args": [
+        "run",
+        "/absolute/path/to/your/fastmail-mcp-server/src/index.ts"
+      ],
+      "env": {
+        "FASTMAIL_API_TOKEN": "fmu1-your-token-here"
+      }
+    }
+  }
+}
+```
+
+2. **Restart Claude Desktop** after making code changes
+
+> **Note:** Claude Desktop spawns the MCP server process on startup. When you modify the server code, you must **quit and restart Claude Desktop** (Cmd+Q on macOS) for changes to take effect. The server doesn't hot-reload.
+
 ## License
 
 MIT
